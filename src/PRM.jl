@@ -17,7 +17,7 @@ module PRM
     mutable struct SimState
         x::Float32 # Current state of PT1 Block
         u::Float32 # Current input
-        y::Vector{Float32} # Current output
+        y::Tuple{Float32} # Current output
         d::Float32 # Current local discretization error
         h::Float32 # Current step size
         t::Float32 # Current time
@@ -28,15 +28,16 @@ module PRM
 
 
     
-    mutable struct SimOutput
-        x_values::Vector{Float32} # State of PT1-Block
-        u_values::Vector{Float32} # Input
-        y_values::Vector{Float32} # Outputs of all blocks
-        d_values::Vector{Float32} # Local Discretization Error
-        t_values::Vector{Float32} # Time
-        h_values::Vector{Float32} # Step size
+    struct SimOutput{T}
+        x_values::Vector{T} # State of PT1-Block
+        u_values::Vector{T} # Input
+        y_values::Vector{T} # Outputs of all blocks
+        d_values::Vector{T} # Local Discretization Error
+        t_values::Vector{T} # Time
+        h_values::Vector{T} # Step size
     end
-    SimOutput() = SimOutput([], [], [], [], [], [])
+    SimOutput(T) = SimOutput{T}(T[], T[], T[], T[], T[], T[])
+    SimOutput() = SimOutput(Float32)
 
 
     # PT1 Block
@@ -73,7 +74,7 @@ module PRM
 
 
 
-    function sim_prm(x, u, t, hys_state, i)
+    function sim_prm!(x, u, t, y, hys_state, i, output::Bool)
         # Block 3, PT1, only output
         _, y3 = pt1(x, 0)
         # Block 1, Subtractor
@@ -82,7 +83,12 @@ module PRM
         y2 = hysteresis(y1, hys_state, i)
         # Block 3, PT1, only state
         xdot, _ = pt1(x, y2)
-        return xdot, [y1, y2, y3]
+        
+        if output
+            y = (y1, y2, y3)
+        end
+
+        return xdot
     end
 
 
@@ -93,15 +99,15 @@ module PRM
         u = state.u
         t = state.t
         h = state.h
+        y = state.y
 
-        k1, y = sim_topology(x, u, t, state.hys_state, state.i)
-        k2, _ = sim_topology(x + h/2*k1, u, t + h/2, state.hys_state, state.i)
-        k3, _ = sim_topology(x - h*k1 + 2*h*k2, u, t + h, state.hys_state, state.i)
+        k1 = sim_topology!(x, u, t, state.y, state.hys_state, state.i, true)
+        k2 = sim_topology!(x + h/2*k1, u, t + h/2, state.y, state.hys_state, state.i, false)
+        k3 = sim_topology!(x - h*k1 + 2*h*k2, u, t + h, state.y, state.hys_state, state.i, false)
         x = x + h*k2
         d = h/6*(k1 - 2*k2 + k3)
 
         state.x = x
-        state.y = y
         state.d = d
     end
 
@@ -126,6 +132,8 @@ module PRM
         append!(output.d_values, state.d)
         append!(output.h_values, state.h)
     end
+
+
 
     function render_output(output::SimOutput)
         y_values = reshape(output.y_values, (3, :))
@@ -167,16 +175,5 @@ module PRM
         render_output(output)
         
     end
-
-
-
-    function main()
-        
-        
-
-    end
-
-
-
 
 end # module
