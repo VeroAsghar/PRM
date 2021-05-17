@@ -128,6 +128,16 @@ module PRM
     end
 
     function render_output(output::SimOutput)
+        y_values = reshape(output.y_values, (3, :))
+        
+        p1 = plot(output.t_values, output.u_values, label="Input")
+        p2 = plot(output.t_values, y_values[1, :], label="Output Subtractor")
+        p3 = plot(output.t_values, y_values[2, :], label="Output Hysteresis")
+        p4 = plot(output.t_values, y_values[3, :], label="Output PT1")
+        p5 = plot(output.t_values, output.h_values, label="Step Size")
+        p6 = plot(output.t_values, output.d_values, label="LDE")
+
+        plot(p1, p2, p3, p4, p5, p6, layout=(3, 2))
     end
 
 
@@ -143,7 +153,7 @@ module PRM
             if state.t < simp.ts
                 state.u = 0
             else
-                state.u = 0.17
+                state.u = 0.49
             end
 
             midpoint_method!(sim_prm, state)
@@ -154,16 +164,8 @@ module PRM
             state.i = state.i + 1
         end
 
-        y_values = reshape(output.y_values, (3, :))
+        render_output(output)
         
-        p1 = plot(output.t_values, output.u_values, label="Input")
-        p2 = plot(output.t_values, y_values[1, :], label="Output Subtractor")
-        p3 = plot(output.t_values, y_values[2, :], label="Output Hysteresis")
-        p4 = plot(output.t_values, y_values[3, :], label="Output PT1")
-        p5 = plot(output.t_values, output.h_values, label="Step Size")
-        p6 = plot(output.t_values, output.d_values, label="LDE")
-
-        plot(p1, p2, p3, p4, p5, p6, layout=(3, 2))
     end
 
 
