@@ -17,14 +17,14 @@ module PRM
     mutable struct SimState
         x::Float32 # Current state of PT1 Block
         u::Float32 # Current input
-        y::Tuple{Float32} # Current output
+        y::Array{Float32} # Current output
         d::Float32 # Current local discretization error
         h::Float32 # Current step size
         t::Float32 # Current time
         i::Int32 # Current loop iteration
         hys_state::Vector{Float32} # Hysteresis memory
     end
-    SimState() = SimState(0.0, 0.0, [], 0.0, 0.0, 0.0, 0, [])
+    SimState() = SimState(0.0, 0.0, [0.0, 0.0, 0.0], 0.0, 0.0, 0.0, 0, [])
 
 
     
@@ -85,7 +85,9 @@ module PRM
         xdot, _ = pt1(x, y2)
         
         if output
-            y = (y1, y2, y3)
+            y[1] = y1
+            y[2] = y2
+            y[3] = y3
         end
 
         return xdot
@@ -99,11 +101,10 @@ module PRM
         u = state.u
         t = state.t
         h = state.h
-        y = state.y
 
-        k1 = sim_topology!(x, u, t, state.y, state.hys_state, state.i, true)
-        k2 = sim_topology!(x + h/2*k1, u, t + h/2, state.y, state.hys_state, state.i, false)
-        k3 = sim_topology!(x - h*k1 + 2*h*k2, u, t + h, state.y, state.hys_state, state.i, false)
+        k1 = sim_topology(x, u, t, state.y, state.hys_state, state.i, true)
+        k2 = sim_topology(x + h/2*k1, u, t + h/2, state.y, state.hys_state, state.i, false)
+        k3 = sim_topology(x - h*k1 + 2*h*k2, u, t + h, state.y, state.hys_state, state.i, false)
         x = x + h*k2
         d = h/6*(k1 - 2*k2 + k3)
 
@@ -145,11 +146,14 @@ module PRM
         p5 = plot(output.t_values, output.h_values, label="Step Size")
         p6 = plot(output.t_values, output.d_values, label="LDE")
 
-        plot(p1, p2, p3, p4, p5, p6, layout=(3, 2))
+        plot(p1, p2, p3, p4, p5, p6, layout=(3, 2), xlabel="Time [s]")
     end
 
 
-    function run_sim(simp::SimParam, state::SimState, output::SimOutput)
+    function run_sim(simp::SimParam)
+        output = SimOutput();
+        state = SimState();
+
         state.x = simp.x0
         state.h = simp.h0
         state.i = 1
@@ -161,10 +165,10 @@ module PRM
             if state.t < simp.ts
                 state.u = 0
             else
-                state.u = 0.49
+                state.u = -0.25
             end
 
-            midpoint_method!(sim_prm, state)
+            midpoint_method!(sim_prm!, state)
             log_output!(state, output)
             update_step_size!(state, simp)
 
