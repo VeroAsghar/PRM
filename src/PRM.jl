@@ -12,19 +12,23 @@ module PRM
         ts::Float32 # Time at which input goes high
         x0::Float32 # Initial state of PT1-Block 
         h0::Float32 # Intial step size [s]
+        u0::Float32 # Rising edge size
     end
 
     mutable struct SimState
         x::Float32 # Current state of PT1 Block
-        u::Float32 # Current input
+        u1::Float32 # Current input
+        u2::Float32
+        u3::Float32
         y::Array{Float32} # Current output
         d::Float32 # Current local discretization error
         h::Float32 # Current step size
         t::Float32 # Current time
         i::Int32 # Current loop iteration
-        hys_state::Vector{Float32} # Hysteresis memory
+        hys_last_run::Int32 # Hysteresis memory
+        hys_last_loop::Int32
     end
-    SimState() = SimState(0.0, 0.0, [0.0, 0.0, 0.0], 0.0, 0.0, 0.0, 0, [])
+    SimState() = SimState(0.0, 0.0, 0.0, 0.0, [0.0, 0.0, 0.0], 0.0, 0.0, 0.0, 0, 0, 0)
 
 
     
@@ -48,46 +52,57 @@ module PRM
     end
 
     # Hysteresis block
-    function hysteresis(u, hys_state, i)
+    function hysteresis(u, hys_last)
         h_e = 0.085 # Rising edge limit
         h_a = 0.065 # Falling edge limit
 
         if u >= h_e
-            y = 1;
+            y = 1
         elseif u <= -h_e
-            y = -1;
-        else
-            y = 0;
+            y = -1
+        elseif -h_a <= u <= h_a
+            y = 0
         end
     
-        if i > 1
-            if hys_state[i - 1] == 1 && u <= h_a
-                y = 0;
-            elseif hys_state[i - 1] == -1 && u >= -h_a
-                y = 0;
+        if h_a < u < h_e
+            if hys_last == 1
+                y = 1
+            else
+                y = 0
+            end
+        elseif -h_e < u < -h_a
+            if hys_last == -1
+                y = 1
+            else
+                y = 0
             end
         end
-
-        append!(hys_state, y)
         return y
     end
 
+    function step(u, t, t_step)
+        if t < t_step
+            return 0
+        else
+            return u
+        end
+    end
 
-
-    function sim_prm!(x, u, t, y, hys_state, i, output::Bool)
+    function sim_prm!(x, u, t, state::SimState, output::Bool)
         # Block 3, PT1, only output
         _, y3 = pt1(x, 0)
         # Block 1, Subtractor
         y1 = -(u, y3)
         # Block 2, Hysteresis
-        y2 = hysteresis(y1, hys_state, i)
+        y2 = hysteresis(y1, state.hys_last_run)
+        state.hys_last_run = y2
         # Block 3, PT1, only state
         xdot, _ = pt1(x, y2)
         
         if output
-            y[1] = y1
-            y[2] = y2
-            y[3] = y3
+            state.y[1] = y1
+            state.y[2] = y2
+            state.y[3] = y3
         end
 
         return xdot
@@ -98,13 +113,12 @@ module PRM
       # Integration method
       function midpoint_method!(sim_topology::Function, state::SimState)
         x = state.x
-        u = state.u
         t = state.t
         h = state.h
 
-        k1 = sim_topology(x, u, t, state.y, state.hys_state, state.i, true)
-        k2 = sim_topology(x + h/2*k1, u, t + h/2, state.y, state.hys_state, state.i, false)
-        k3 = sim_topology(x - h*k1 + 2*h*k2, u, t + h, state.y, state.hys_state, state.i, false)
+        k1 = sim_topology(x, state.u1, t, state, true)
+        k2 = sim_topology(x + h/2*k1, state.u2, t + h/2, state, false)
+        k3 = sim_topology(x - h*k1 + 2*h*k2, state.u3, t + h, state, false)
         x = x + h*k2
         d = h/6*(k1 - 2*k2 + k3)
 
@@ -114,19 +128,8 @@ module PRM
 
 
 
-    function update_step_size!(state::SimState, simp::SimParam)
-        h = state.h
-        h_min = 12*simp.epsilon
-        h_max = simp.Tm*2
-        h = 0.9*h*min(max((simp.epsilon/abs(state.d))^(1/3), 0.3), 2)
-        h = min(max(h, h_min), h_max)
-        state.h = h
-    end
-
-
-
     function log_output!(state::SimState, output::SimOutput)
-        append!(output.u_values, state.u)
+        append!(output.u_values, state.u1)
         append!(output.x_values, state.x)
         append!(output.y_values, state.y)
         append!(output.t_values, state.t)
@@ -160,17 +163,35 @@ module PRM
 
         state.t = simp.t0
 
+        h_min = 12*simp.epsilon
+        h_max = simp.Tm*2
+        
         while state.t < simp.tf
 
-            if state.t < simp.ts
-                state.u = 0
-            else
-                state.u = -0.25
-            end
+            state.u1 = step(simp.u0, state.t, simp.ts)
+            state.u2 = step(simp.u0, state.t + state.h/2, simp.ts)
+            state.u3 = step(simp.u0, state.t + state.h, simp.ts)
 
+            state.hys_last_run = state.hys_last_loop
             midpoint_method!(sim_prm!, state)
             log_output!(state, output)
-            update_step_size!(state, simp)
+
+            
+
+            if abs(state.d) > 0
+                h_new = state.h*(simp.epsilon/abs(state.d))^(1/3)
+                
+                h_new = min(max(h_new, h_min), 0.99*h_max)
+
+                if h_new > 2*state.h
+                    state.h = h_new
+                elseif h_new <= state.h
+                    state.h = 0.75*h_new
+                    continue
+                end
+            end
+
+            state.hys_last_loop = state.hys_last_run
 
             state.t = state.t + state.h
             state.i = state.i + 1
@@ -180,4 +201,9 @@ module PRM
         
     end
 
+
+
 end # module
+simp = PRM.SimParam(Tm=10, epsilon=1e-10, x0=0, h0=0.01, t0=0, tf=20, ts=1, u0=0.17);
+
+PRM.run_sim(simp)
