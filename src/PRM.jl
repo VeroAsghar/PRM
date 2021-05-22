@@ -174,7 +174,6 @@ module PRM
 
             state.hys_last_run = state.hys_last_loop
             midpoint_method!(sim_prm!, state)
-            log_output!(state, output)
 
             
 
@@ -192,6 +191,7 @@ module PRM
             end
 
             state.hys_last_loop = state.hys_last_run
+            log_output!(state, output)
 
             state.t = state.t + state.h
             state.i = state.i + 1
